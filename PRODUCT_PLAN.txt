@@ -1,0 +1,131 @@
+Product Plan: LinkedIn to CV — Extension + Web Platform
+
+─────────────────────────────────────────────────────────────────────────────
+OVERVIEW
+─────────────────────────────────────────────────────────────────────────────
+
+The browser extension acts as a top-of-funnel acquisition tool. It is
+intentionally limited to drive users toward the full web platform. The web
+platform offers a free tier (ad-supported, same capability as extension) and
+a Pro tier with advanced editing and templates.
+
+─────────────────────────────────────────────────────────────────────────────
+PHASE 1 — EXTENSION (current, shipping now)
+─────────────────────────────────────────────────────────────────────────────
+
+What it does:
+  - Parses LinkedIn PDF export
+  - Generates a formatted CV from the parsed data
+  - Allows editing of up to 3 skills only (hard limit)
+  - Downloads the CV as a PDF
+
+Intentional limitations (funnel triggers):
+  - Skills: capped at 3. User sees a "Unlock all skills on the web →" prompt
+    when they try to add a 4th.
+  - No experience editor — dates, descriptions, titles are read-only
+  - No layout/template selection — one default template only
+  - No cover letter
+  - No save/resume session
+
+CTA placement in the extension popup:
+  - Below the skills section: "Want to edit your full experience and skills?
+    Build your CV at linkedin-to-cv.com — free"
+  - After PDF download: "Your CV is ready. Take it further at
+    linkedin-to-cv.com"
+
+─────────────────────────────────────────────────────────────────────────────
+PHASE 2 — WEB PLATFORM (Next.js)
+─────────────────────────────────────────────────────────────────────────────
+
+Tech stack:
+  - Next.js (App Router)
+  - Auth: Clerk or NextAuth
+  - Database: Postgres (Supabase or Neon)
+  - Payments: Lemon Squeezy (handles EU VAT automatically)
+  - Ads (free tier): Google AdSense or Carbon Ads (less intrusive,
+    developer-focused audience)
+
+--- FREE TIER (ad-supported) ---
+
+Same core capability as the extension, plus:
+  - Full skill list editing (add, remove, reorder)
+  - Soft session save (CV stored in browser localStorage, no account needed)
+  - 2 CV templates
+  - Ads displayed in the editor sidebar and between steps
+  - "Upgrade to Pro" prompts at natural friction points
+
+Account not required for free tier. Optional sign-up to save CV to cloud.
+
+--- PRO TIER (subscription, ~$5–8/month or ~$40/year) ---
+
+Everything in free, plus:
+  - Full experience editor
+      - Edit job titles, company names, dates, bullet points
+      - Reorder positions via drag-and-drop
+      - Add positions not present in the LinkedIn export
+  - Full education editor (same as experience)
+  - Full skills editor with categorization (Technical, Languages, Soft skills)
+  - 6+ visual CV layouts (modern, minimal, creative, two-column, etc.)
+  - Cover letter generator (pre-filled from CV data, editable)
+  - Cloud save — multiple CV versions per account
+  - Export to PDF and DOCX
+  - No ads
+  - Priority support
+
+─────────────────────────────────────────────────────────────────────────────
+USER JOURNEY
+─────────────────────────────────────────────────────────────────────────────
+
+1. User finds extension on Chrome Web Store or Firefox Add-ons
+2. Installs, uploads LinkedIn PDF, gets a CV in 30 seconds
+3. Hits the 3-skill limit → sees CTA → visits linkedin-to-cv.com
+4. Lands on web app, re-uploads PDF (or pastes from extension session)
+5. Uses free tier, sees ads, gets value
+6. Hits a Pro feature (experience editor, extra template) → upgrade prompt
+7. Converts to Pro subscriber
+
+─────────────────────────────────────────────────────────────────────────────
+EXTENSION CHANGES NEEDED FOR FUNNEL (Phase 1 work)
+─────────────────────────────────────────────────────────────────────────────
+
+- Add 3-skill hard cap to popup.js skill editing logic
+- Show inline upsell message when cap is hit
+- Add persistent footer CTA link to linkedin-to-cv.com
+- Remove any template selector UI (if present) — lock to default
+
+─────────────────────────────────────────────────────────────────────────────
+PHASE 2 MILESTONES
+─────────────────────────────────────────────────────────────────────────────
+
+M1 — Core web app (free tier parity with extension)
+  - Next.js project setup
+  - PDF upload + parse (reuse existing pdfParser logic)
+  - CV editor: skills (full), read-only experience
+  - 2 templates
+  - PDF export
+  - AdSense integration
+
+M2 — Pro tier foundation
+  - Auth + accounts
+  - Lemon Squeezy subscription integration
+  - Pro gate on protected features
+  - Cloud CV save
+
+M3 — Pro editing features
+  - Experience editor
+  - Education editor
+  - Drag-and-drop reordering
+  - Additional templates
+
+M4 — Cover letter + DOCX export
+
+─────────────────────────────────────────────────────────────────────────────
+REVENUE MODEL SUMMARY
+─────────────────────────────────────────────────────────────────────────────
+
+  Free tier (web)   → Ad revenue (small but passive)
+  Pro tier (web)    → Subscription revenue (primary)
+  Extension         → Free, zero cost to maintain, acquisition only
+
+Break-even estimate: ~50 Pro subscribers covers typical SaaS hosting costs
+(Vercel, Supabase, Clerk free tiers are generous at low scale).

@@ -1,0 +1,47 @@
+:root {
+  --ink: #1d252c;
+  --muted: #5c6872;
+  --line: #d5dbe0;
+  --paper: #ffffff;
+  --page-bg: #eef2f5;
+  --accent: #14324a;
+  --accent-soft: #d7e1ea;
+  --chip-bg: #ffffff;
+}
+
+html,
+body,
+#__next {
+  height: 100%;
+}
+
+body {
+  background: var(--page-bg);
+  color: var(--ink);
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Aptos", "Helvetica",
+    Arial, sans-serif;
+}
+
+.cv-preview {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  padding: 18px;
+  border-radius: 6px;
+}
+
+.skills-list {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0 0;
+}
+.skill-pill {
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--chip-bg);
+  font-size: 13px;
+}
