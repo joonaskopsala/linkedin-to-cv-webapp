@@ -1,0 +1,1464 @@
+═══════════════════════════════════════════════════════════════════════════════
+LINKEDIN → CV WEBAPP — FULL IMPLEMENTATION PLAN (NO PAID SERVICES)
+═══════════════════════════════════════════════════════════════════════════════
+
+GOAL
+────
+Build a complete, working web app that:
+  1. Accepts a LinkedIn PDF export upload
+  2. Validates it is a real LinkedIn PDF
+  3. Navigates to an editor page showing the parsed CV
+  4. Lets the user edit every field (name, headline, summary, experience,
+     education, skills, languages)
+  5. Skills are rendered as deletable "node" chips + new skills can be typed in
+  6. User can upload a profile picture which appears in the CV preview
+  7. User can download the final CV as a PDF — no server required for this step
+
+TECH STACK (existing + additions)
+──────────────────────────────────
+  Already present:
+    - Next.js (App Router, TypeScript)
+    - MUI (Material UI v5) + @mui/icons-material
+    - pdf-parse (server-side PDF text extraction)
+    - React, ReactDOM
+
+  New packages to install (all free, open source):
+    - @react-pdf/renderer   — generates a real PDF file client-side from JSX
+                              (npm: @react-pdf/renderer)
+    - Install command:
+        pnpm add @react-pdf/renderer
+    - No other new packages required.
+
+  DO NOT install:
+    - puppeteer / playwright (server-side headless, overkill)
+    - html2canvas (produces raster image inside PDF, bad quality)
+    - Any auth library (Clerk, NextAuth)
+    - Any database (Supabase, Neon, Prisma)
+    - Any payment library
+
+CURRENT FILE STRUCTURE (reference)
+────────────────────────────────────
+  app/
+    globals.css
+    layout.tsx           — root layout, wraps with <Providers>
+    page.tsx             — upload page (hero + LinkedInUpload component)
+    providers.tsx        — MUI ThemeProvider
+    api/
+      parse-linkedin-pdf/
+        route.ts         — POST handler: parses PDF, returns ProfileData JSON
+  components/
+    CvPreview.tsx        — read-only CV display (will become the editor target)
+    LinkedInUpload.tsx   — file drop zone + upload button
+  lib/
+    linkedinPdfParser.ts — PDF text extraction + parsing logic + ProfileData types
+
+KEY INTERFACES (already defined in lib/linkedinPdfParser.ts)
+─────────────────────────────────────────────────────────────
+  ProfileData {
+    name?: string
+    headline?: string
+    location?: string
+    email?: string
+    linkedInUrl?: string
+    summary?: string
+    experience?: Experience[]
+    education?: Education[]
+    skills?: string[]
+    languages?: string[]
+    profilePhotoBase64?: string   ← will store the profile picture here
+  }
+
+  Experience {
+    company?: string
+    title?: string
+    startDate?: string
+    endDate?: string
+    isCurrent?: boolean
+    description?: string
+    bullets?: string[]
+  }
+
+  Education {
+    school?: string
+    degree?: string
+    fieldOfStudy?: string
+    startDate?: string
+    endDate?: string
+  }
+
+═══════════════════════════════════════════════════════════════════════════════
+STEP 1 — INSTALL NEW DEPENDENCY
+═══════════════════════════════════════════════════════════════════════════════
+
+Run in the project root:
+
+    pnpm add @react-pdf/renderer
+
+Then run:
+
+    pnpm add --save-dev @types/react-pdf
+
+(If @types/react-pdf does not exist, skip it — @react-pdf/renderer ships its
+own types and needs no separate @types package.)
+
+Verify package.json now contains "@react-pdf/renderer" in dependencies.
+
+═══════════════════════════════════════════════════════════════════════════════
+STEP 2 — DATA BRIDGE: sessionStorage UTILITY
+═══════════════════════════════════════════════════════════════════════════════
+
+Purpose:
+  The upload happens on "/" and the editor is at "/editor". We need to pass the
+  parsed ProfileData between the two pages without a database. We use
+  sessionStorage (lives for the browser tab session, cleared on tab close).
+
+File to CREATE: lib/sessionProfile.ts
+
+  Contents:
+
+    import { ProfileData } from "./linkedinPdfParser";
+
+    const SESSION_KEY = "cv_profile";
+
+    export function saveProfileToSession(profile: ProfileData): void {
+      if (typeof window === "undefined") return;
+      sessionStorage.setItem(SESSION_KEY, JSON.stringify(profile));
+    }
+
+    export function loadProfileFromSession(): ProfileData | null {
+      if (typeof window === "undefined") return null;
+      const raw = sessionStorage.getItem(SESSION_KEY);
+      if (!raw) return null;
+      try {
+        return JSON.parse(raw) as ProfileData;
+      } catch {
+        return null;
+      }
+    }
+
+    export function clearProfileFromSession(): void {
+      if (typeof window === "undefined") return;
+      sessionStorage.removeItem(SESSION_KEY);
+    }
+
+═══════════════════════════════════════════════════════════════════════════════
+STEP 3 — MODIFY app/page.tsx (upload page)
+═══════════════════════════════════════════════════════════════════════════════
+
+Current behaviour:
+  - Shows hero + LinkedInUpload component
+  - When upload succeeds, sets `profileData` state and shows raw JSON <pre>
+
+Required behaviour:
+  - When upload succeeds, save the profile to sessionStorage, then use
+    Next.js router to navigate to "/editor"
+  - Remove the raw JSON display entirely
+  - Remove the `profileData` state entirely (no longer needed here)
+
+Exact changes to app/page.tsx:
+
+  3a. ADD these imports at the top:
+        import { useRouter } from "next/navigation";
+        import { saveProfileToSession } from "../lib/sessionProfile";
+        import { ProfileData } from "../lib/linkedinPdfParser";
+
+  3b. REMOVE the useState import for profileData:
+        Remove: const [profileData, setProfileData] = useState<ProfileData | null>(null);
+        Remove: import { useState } from "react";
+        (useState is no longer needed at all in this file)
+
+  3c. ADD inside the component body (before the return statement):
+        const router = useRouter();
+
+        const handleUploadSuccess = (profile: ProfileData) => {
+          saveProfileToSession(profile);
+          router.push("/editor");
+        };
+
+  3d. CHANGE the LinkedInUpload prop:
+        Before: <LinkedInUpload onSuccess={setProfileData} />
+        After:  <LinkedInUpload onSuccess={handleUploadSuccess} />
+
+  3e. REMOVE the entire conditional block:
+        Remove:
+          {!profileData ? (
+            <Container ...>...</Container>
+          ) : (
+            <Container ...>
+              <Box ...>← Upload another</Box>
+              <Box component="pre" ...>{JSON.stringify(profileData, null, 2)}</Box>
+            </Container>
+          )}
+
+        Replace with just the upload hero, always visible:
+          <Container maxWidth="sm" sx={{ py: { xs: 6, md: 10 }, textAlign: "center" }}>
+            ...the hero text and LinkedInUpload component...
+          </Container>
+
+  Final structure of app/page.tsx after changes:
+
+    "use client";
+
+    import { useRouter } from "next/navigation";
+    import { Box, Container, Typography } from "@mui/material";
+    import LinkedInUpload from "../components/LinkedInUpload";
+    import { ProfileData } from "../lib/linkedinPdfParser";
+    import { saveProfileToSession } from "../lib/sessionProfile";
+
+    export default function Home() {
+      const router = useRouter();
+
+      const handleUploadSuccess = (profile: ProfileData) => {
+        saveProfileToSession(profile);
+        router.push("/editor");
+      };
+
+      return (
+        <Box sx={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
+          {/* Top nav */}
+          <Box component="header" sx={{
+            borderBottom: "1px solid", borderColor: "divider",
+            bgcolor: "background.paper", px: 3, py: 1.5,
+            display: "flex", alignItems: "center",
+          }}>
+            <Typography variant="h6" color="primary"
+              sx={{ letterSpacing: "-0.5px", fontWeight: "bold" }}>
+              LinkedIn → CV
+            </Typography>
+          </Box>
+
+          <Box component="main" sx={{ flex: 1 }}>
+            <Container maxWidth="sm" sx={{ py: { xs: 6, md: 10 }, textAlign: "center" }}>
+              <Typography variant="h3" sx={{
+                mb: 1.5, letterSpacing: "-1px", lineHeight: 1.15, fontWeight: "bold"
+              }}>
+                Turn your LinkedIn profile into a CV
+              </Typography>
+              <Typography variant="body1" color="text.secondary"
+                sx={{ mb: 5, maxWidth: 420, mx: "auto" }}>
+                Export your LinkedIn profile as a PDF, upload it here, and get a
+                clean, formatted CV instantly — no sign-up required.
+              </Typography>
+              <LinkedInUpload onSuccess={handleUploadSuccess} />
+            </Container>
+          </Box>
+        </Box>
+      );
+    }
+
+═══════════════════════════════════════════════════════════════════════════════
+STEP 4 — CREATE THE EDITOR PAGE: app/editor/page.tsx
+═══════════════════════════════════════════════════════════════════════════════
+
+This is the main page users land on after upload. It has two panels side by side:
+  LEFT PANEL  — editable form fields
+  RIGHT PANEL — live CV preview (read-only visual, updates as user edits)
+
+The page has a top bar with:
+  - "← Start over" button (clears session, goes back to "/")
+  - "Download PDF" button (triggers PDF generation)
+
+File to CREATE: app/editor/page.tsx
+
+  4a. IMPORTS needed at top of file:
+
+    "use client";
+
+    import { useEffect, useState, useRef } from "react";
+    import { useRouter } from "next/navigation";
+    import {
+      Box, Button, Container, Divider, Typography, CircularProgress,
+      Alert
+    } from "@mui/material";
+    import ArrowBackIcon from "@mui/icons-material/ArrowBack";
+    import DownloadIcon from "@mui/icons-material/Download";
+    import { ProfileData } from "../../lib/linkedinPdfParser";
+    import { loadProfileFromSession, clearProfileFromSession } from "../../lib/sessionProfile";
+    import CvEditorForm from "../../components/CvEditorForm";
+    import CvPreviewPanel from "../../components/CvPreviewPanel";
+    import { generateCvPdf } from "../../lib/generateCvPdf";
+
+  4b. COMPONENT STATE:
+
+    const [profile, setProfile] = useState<ProfileData | null>(null);
+    const [loading, setLoading] = useState(true);   // true while reading sessionStorage
+    const [downloading, setDownloading] = useState(false);
+    const router = useRouter();
+
+  4c. ON MOUNT — read profile from sessionStorage:
+
+    useEffect(() => {
+      const saved = loadProfileFromSession();
+      if (!saved) {
+        // No profile found — redirect back to upload
+        router.replace("/");
+        return;
+      }
+      setProfile(saved);
+      setLoading(false);
+    }, []);
+
+  4d. HANDLER — update profile field(s):
+
+    const handleProfileChange = (updated: ProfileData) => {
+      setProfile(updated);
+    };
+
+  4e. HANDLER — start over:
+
+    const handleStartOver = () => {
+      clearProfileFromSession();
+      router.push("/");
+    };
+
+  4f. HANDLER — download PDF:
+
+    const handleDownload = async () => {
+      if (!profile) return;
+      setDownloading(true);
+      try {
+        await generateCvPdf(profile);
+      } finally {
+        setDownloading(false);
+      }
+    };
+
+  4g. RENDER — loading state:
+
+    if (loading) {
+      return (
+        <Box sx={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100vh" }}>
+          <CircularProgress />
+        </Box>
+      );
+    }
+
+    if (!profile) return null;
+
+  4h. RENDER — main layout:
+
+    return (
+      <Box sx={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
+
+        {/* Top bar */}
+        <Box component="header" sx={{
+          borderBottom: "1px solid", borderColor: "divider",
+          bgcolor: "background.paper", px: 3, py: 1.5,
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+        }}>
+          <Button
+            startIcon={<ArrowBackIcon />}
+            onClick={handleStartOver}
+            variant="text"
+            color="inherit"
+          >
+            Start over
+          </Button>
+
+          <Typography variant="h6" color="primary"
+            sx={{ letterSpacing: "-0.5px", fontWeight: "bold" }}>
+            LinkedIn → CV
+          </Typography>
+
+          <Button
+            startIcon={downloading ? <CircularProgress size={16} /> : <DownloadIcon />}
+            onClick={handleDownload}
+            variant="contained"
+            disabled={downloading}
+          >
+            {downloading ? "Generating…" : "Download PDF"}
+          </Button>
+        </Box>
+
+        {/* Two-panel body */}
+        <Box component="main" sx={{
+          flex: 1,
+          display: "flex",
+          overflow: "hidden",         // prevents full-page scroll; each panel scrolls independently
+          height: "calc(100vh - 57px)", // 57px = header height, adjust if needed
+        }}>
+
+          {/* LEFT: editor form, scrollable */}
+          <Box sx={{
+            width: { xs: "100%", md: "40%" },
+            overflowY: "auto",
+            borderRight: "1px solid",
+            borderColor: "divider",
+            p: 3,
+          }}>
+            <CvEditorForm profile={profile} onChange={handleProfileChange} />
+          </Box>
+
+          {/* RIGHT: live preview, scrollable */}
+          <Box sx={{
+            display: { xs: "none", md: "block" },
+            width: "60%",
+            overflowY: "auto",
+            bgcolor: "grey.100",
+            p: 4,
+          }}>
+            <CvPreviewPanel profile={profile} />
+          </Box>
+
+        </Box>
+      </Box>
+    );
+
+═══════════════════════════════════════════════════════════════════════════════
+STEP 5 — CREATE CvEditorForm COMPONENT: components/CvEditorForm.tsx
+═══════════════════════════════════════════════════════════════════════════════
+
+This component renders all editable fields. It receives `profile: ProfileData`
+and `onChange: (updated: ProfileData) => void`.
+
+Every field change calls onChange with a full new ProfileData copy (immutable
+update pattern — always spread the old profile and replace only the changed
+field).
+
+  5a. IMPORTS:
+
+    "use client";
+
+    import {
+      Box, TextField, Typography, Divider, IconButton,
+      Chip, Button, Stack
+    } from "@mui/material";
+    import AddPhotoAlternateIcon from "@mui/icons-material/AddPhotoAlternate";
+    import DeleteIcon from "@mui/icons-material/Delete";
+    import AddIcon from "@mui/icons-material/Add";
+    import { useRef, useState } from "react";
+    import { ProfileData, Experience, Education } from "../lib/linkedinPdfParser";
+
+  5b. PROPS TYPE:
+
+    interface Props {
+      profile: ProfileData;
+      onChange: (updated: ProfileData) => void;
+    }
+
+  5c. HELPER — field updater factory:
+
+    // Returns a function that updates a top-level string field on profile
+    const fieldUpdater = (key: keyof ProfileData) =>
+      (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+        onChange({ ...profile, [key]: e.target.value });
+      };
+
+  5d. SECTION: Profile Picture Upload
+
+    Description:
+      - Render a small avatar or placeholder square (80×80px)
+      - Clicking it opens a hidden <input type="file" accept="image/*">
+      - On file select, read the file as a base64 data URL using FileReader
+      - Call onChange({ ...profile, profilePhotoBase64: dataUrl })
+
+    Implementation:
+      const photoInputRef = useRef<HTMLInputElement>(null);
+
+      const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+          const dataUrl = ev.target?.result as string;
+          onChange({ ...profile, profilePhotoBase64: dataUrl });
+        };
+        reader.readAsDataURL(file);
+      };
+
+    Render:
+      <Box sx={{ display: "flex", alignItems: "center", gap: 2, mb: 3 }}>
+        <Box
+          onClick={() => photoInputRef.current?.click()}
+          sx={{
+            width: 80, height: 80, borderRadius: "50%",
+            border: "2px dashed", borderColor: "primary.main",
+            overflow: "hidden", cursor: "pointer",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            bgcolor: "action.hover",
+          }}
+        >
+          {profile.profilePhotoBase64 ? (
+            <img
+              src={profile.profilePhotoBase64}
+              alt="Profile"
+              style={{ width: "100%", height: "100%", objectFit: "cover" }}
+            />
+          ) : (
+            <AddPhotoAlternateIcon color="action" />
+          )}
+        </Box>
+        <Box>
+          <Typography variant="body2" fontWeight="bold">Profile Picture</Typography>
+          <Typography variant="caption" color="text.secondary">
+            Optional — click to upload
+          </Typography>
+        </Box>
+        <input
+          ref={photoInputRef}
+          type="file"
+          accept="image/*"
+          style={{ display: "none" }}
+          onChange={handlePhotoChange}
+        />
+      </Box>
+
+  5e. SECTION: Basic Info Fields
+
+    Render MUI <TextField> for each field, fullWidth, variant="outlined", size="small"
+
+    Fields (in this order):
+      - Name         key="name"       label="Full Name"
+      - Headline     key="headline"   label="Headline / Job Title"
+      - Location     key="location"   label="Location"
+      - Email        key="email"      label="Email"    type="email"
+      - LinkedIn URL key="linkedInUrl" label="LinkedIn URL"
+
+    Each TextField:
+      value={profile.name ?? ""}
+      onChange={fieldUpdater("name")}
+      sx={{ mb: 2 }}
+
+  5f. SECTION: Summary
+
+    Render a multiline TextField:
+      label="Summary / About"
+      multiline
+      minRows={3}
+      maxRows={8}
+      value={profile.summary ?? ""}
+      onChange={fieldUpdater("summary")}
+      fullWidth
+      sx={{ mb: 2 }}
+
+  5g. SECTION: Skills (NODE CHIPS)
+
+    This is the most important section. Skills are displayed as chips.
+    Each chip has an X (delete) button. There is a text field + Add button
+    to add new skills.
+
+    Local state inside CvEditorForm:
+      const [newSkill, setNewSkill] = useState("");
+
+    Skill delete handler:
+      const handleDeleteSkill = (index: number) => {
+        const updated = (profile.skills ?? []).filter((_, i) => i !== index);
+        onChange({ ...profile, skills: updated });
+      };
+
+    Skill add handler:
+      const handleAddSkill = () => {
+        const trimmed = newSkill.trim();
+        if (!trimmed) return;
+        // Prevent duplicates (case-insensitive check):
+        const existing = (profile.skills ?? []).map(s => s.toLowerCase());
+        if (existing.includes(trimmed.toLowerCase())) {
+          setNewSkill("");
+          return;
+        }
+        onChange({ ...profile, skills: [...(profile.skills ?? []), trimmed] });
+        setNewSkill("");
+      };
+
+    Handle Enter key in the text field:
+      const handleSkillKeyDown = (e: React.KeyboardEvent) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          handleAddSkill();
+        }
+      };
+
+    Render:
+      <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: "bold" }}>
+        Skills
+      </Typography>
+
+      {/* Chip grid */}
+      <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1, mb: 2 }}>
+        {(profile.skills ?? []).map((skill, i) => (
+          <Chip
+            key={i}
+            label={skill}
+            onDelete={() => handleDeleteSkill(i)}
+            size="small"
+            color="primary"
+            variant="outlined"
+          />
+        ))}
+        {(profile.skills ?? []).length === 0 && (
+          <Typography variant="caption" color="text.secondary">
+            No skills yet. Add some below.
+          </Typography>
+        )}
+      </Box>
+
+      {/* Add skill row */}
+      <Box sx={{ display: "flex", gap: 1, mb: 2 }}>
+        <TextField
+          size="small"
+          placeholder="Add a skill…"
+          value={newSkill}
+          onChange={(e) => setNewSkill(e.target.value)}
+          onKeyDown={handleSkillKeyDown}
+          sx={{ flex: 1 }}
+        />
+        <Button
+          variant="outlined"
+          startIcon={<AddIcon />}
+          onClick={handleAddSkill}
+          disabled={!newSkill.trim()}
+        >
+          Add
+        </Button>
+      </Box>
+
+  5h. SECTION: Languages
+
+    Same chip pattern as Skills.
+    Use a separate local state: const [newLanguage, setNewLanguage] = useState("");
+    key in profile: "languages"
+
+    Copy the exact same chip + add-row pattern from 5g but for languages.
+    Label heading: "Languages"
+
+  5i. SECTION: Experience
+
+    For each experience entry in profile.experience[], render an accordion-style
+    card (use MUI Box with border, border-radius, padding).
+
+    Each card has:
+      - Title field:       value={exp.title ?? ""}
+      - Company field:     value={exp.company ?? ""}
+      - Start Date field:  value={exp.startDate ?? ""}
+      - End Date field:    value={exp.endDate ?? ""}
+                           Placeholder: "Present" if isCurrent is true
+      - Description field: multiline, value={exp.description ?? ""}
+      - Bullets: each bullet is a TextField, with a delete icon button beside it
+        - Below the bullets, a small "+ Add bullet" text button
+
+    Experience updater helper:
+      const updateExperience = (index: number, updated: Experience) => {
+        const list = [...(profile.experience ?? [])];
+        list[index] = updated;
+        onChange({ ...profile, experience: list });
+      };
+
+    Delete experience entry:
+      const deleteExperience = (index: number) => {
+        const list = (profile.experience ?? []).filter((_, i) => i !== index);
+        onChange({ ...profile, experience: list });
+      };
+
+    Bullet update inside an experience:
+      const updateBullet = (expIndex: number, bulletIndex: number, value: string) => {
+        const exp = { ...(profile.experience ?? [])[expIndex] };
+        const bullets = [...(exp.bullets ?? [])];
+        bullets[bulletIndex] = value;
+        exp.bullets = bullets;
+        updateExperience(expIndex, exp);
+      };
+
+    Delete bullet:
+      const deleteBullet = (expIndex: number, bulletIndex: number) => {
+        const exp = { ...(profile.experience ?? [])[expIndex] };
+        exp.bullets = (exp.bullets ?? []).filter((_, i) => i !== bulletIndex);
+        updateExperience(expIndex, exp);
+      };
+
+    Add bullet:
+      const addBullet = (expIndex: number) => {
+        const exp = { ...(profile.experience ?? [])[expIndex] };
+        exp.bullets = [...(exp.bullets ?? []), ""];
+        updateExperience(expIndex, exp);
+      };
+
+    Render each experience as:
+      <Box key={i} sx={{
+        border: "1px solid", borderColor: "divider",
+        borderRadius: 2, p: 2, mb: 2, position: "relative"
+      }}>
+        <IconButton
+          size="small"
+          onClick={() => deleteExperience(i)}
+          sx={{ position: "absolute", top: 8, right: 8 }}
+          color="error"
+        >
+          <DeleteIcon fontSize="small" />
+        </IconButton>
+
+        <TextField label="Job Title" size="small" fullWidth
+          value={exp.title ?? ""} sx={{ mb: 1.5 }}
+          onChange={(e) => updateExperience(i, { ...exp, title: e.target.value })} />
+
+        <TextField label="Company" size="small" fullWidth
+          value={exp.company ?? ""} sx={{ mb: 1.5 }}
+          onChange={(e) => updateExperience(i, { ...exp, company: e.target.value })} />
+
+        <Box sx={{ display: "flex", gap: 1, mb: 1.5 }}>
+          <TextField label="Start Date" size="small"
+            value={exp.startDate ?? ""}
+            onChange={(e) => updateExperience(i, { ...exp, startDate: e.target.value })} />
+          <TextField label="End Date" size="small"
+            value={exp.endDate ?? ""}
+            placeholder={exp.isCurrent ? "Present" : ""}
+            onChange={(e) => updateExperience(i, { ...exp, endDate: e.target.value })} />
+        </Box>
+
+        <TextField label="Description" size="small" fullWidth multiline minRows={2}
+          value={exp.description ?? ""} sx={{ mb: 1.5 }}
+          onChange={(e) => updateExperience(i, { ...exp, description: e.target.value })} />
+
+        {/* Bullets */}
+        {(exp.bullets ?? []).map((bullet, bi) => (
+          <Box key={bi} sx={{ display: "flex", alignItems: "center", gap: 1, mb: 1 }}>
+            <TextField size="small" fullWidth
+              value={bullet}
+              onChange={(e) => updateBullet(i, bi, e.target.value)}
+              placeholder="Bullet point…" />
+            <IconButton size="small" onClick={() => deleteBullet(i, bi)} color="error">
+              <DeleteIcon fontSize="small" />
+            </IconButton>
+          </Box>
+        ))}
+
+        <Button size="small" startIcon={<AddIcon />} onClick={() => addBullet(i)}>
+          Add bullet
+        </Button>
+      </Box>
+
+    Below all experience cards, add an "Add Experience" button:
+      <Button variant="outlined" startIcon={<AddIcon />} fullWidth
+        onClick={() => {
+          onChange({
+            ...profile,
+            experience: [
+              ...(profile.experience ?? []),
+              { title: "", company: "", startDate: "", endDate: "" }
+            ]
+          });
+        }}
+      >
+        Add Experience
+      </Button>
+
+  5j. SECTION: Education
+
+    Same pattern as Experience but simpler (no bullets):
+      - School field
+      - Degree field
+      - Field of Study field
+      - Start Year field
+      - End Year field
+      - Delete button
+
+    Education updater:
+      const updateEducation = (index: number, updated: Education) => {
+        const list = [...(profile.education ?? [])];
+        list[index] = updated;
+        onChange({ ...profile, education: list });
+      };
+
+    Delete education:
+      const deleteEducation = (index: number) => {
+        const list = (profile.education ?? []).filter((_, i) => i !== index);
+        onChange({ ...profile, education: list });
+      };
+
+    "Add Education" button at the bottom of section.
+
+  5k. FULL RENDER STRUCTURE of CvEditorForm:
+
+    return (
+      <Box>
+        <Typography variant="h6" fontWeight="bold" sx={{ mb: 2 }}>Edit Your CV</Typography>
+
+        {/* Profile picture */}
+        ...section 5d...
+
+        <Divider sx={{ my: 2 }} />
+
+        {/* Basic info */}
+        <Typography variant="subtitle1" fontWeight="bold" sx={{ mb: 1 }}>Basic Info</Typography>
+        ...fields from 5e...
+
+        <Divider sx={{ my: 2 }} />
+
+        {/* Summary */}
+        <Typography variant="subtitle1" fontWeight="bold" sx={{ mb: 1 }}>Summary</Typography>
+        ...field from 5f...
+
+        <Divider sx={{ my: 2 }} />
+
+        {/* Skills */}
+        ...section 5g...
+
+        <Divider sx={{ my: 2 }} />
+
+        {/* Languages */}
+        ...section 5h...
+
+        <Divider sx={{ my: 2 }} />
+
+        {/* Experience */}
+        <Typography variant="subtitle1" fontWeight="bold" sx={{ mb: 1 }}>Experience</Typography>
+        ...section 5i...
+
+        <Divider sx={{ my: 2 }} />
+
+        {/* Education */}
+        <Typography variant="subtitle1" fontWeight="bold" sx={{ mb: 1 }}>Education</Typography>
+        ...section 5j...
+      </Box>
+    );
+
+═══════════════════════════════════════════════════════════════════════════════
+STEP 6 — CREATE CvPreviewPanel COMPONENT: components/CvPreviewPanel.tsx
+═══════════════════════════════════════════════════════════════════════════════
+
+Purpose:
+  This is the live read-only visual preview of the CV shown in the right panel.
+  It mirrors the existing CvPreview.tsx but:
+    - Shows the profile picture (if profilePhotoBase64 is set)
+    - Always renders all sections (experience, education, skills, languages)
+    - Updates live as the user edits (because it receives profile as a prop)
+
+  The existing CvPreview.tsx can be used as a starting point, but since it is
+  still used nowhere important after our changes, we create a new component
+  rather than modifying the existing one. (The existing CvPreview.tsx can be
+  left untouched or deleted later.)
+
+File to CREATE: components/CvPreviewPanel.tsx
+
+  6a. IMPORTS:
+
+    "use client";
+
+    import { Box, Chip, Divider, Link, Typography } from "@mui/material";
+    import LocationOnIcon from "@mui/icons-material/LocationOn";
+    import EmailIcon from "@mui/icons-material/Email";
+    import LinkedInIcon from "@mui/icons-material/LinkedIn";
+    import { ProfileData } from "../lib/linkedinPdfParser";
+
+  6b. PROPS:
+
+    interface Props {
+      profile: ProfileData;
+    }
+
+  6c. RENDER:
+
+    return (
+      <Box sx={{
+        bgcolor: "background.paper",
+        borderRadius: 2,
+        boxShadow: 2,
+        p: { xs: 3, sm: 4 },
+        maxWidth: 720,
+        mx: "auto",
+      }}>
+
+        {/* ── HEADER ROW ── */}
+        <Box sx={{ display: "flex", gap: 3, mb: 3, alignItems: "flex-start" }}>
+
+          {/* Profile picture (only render if present) */}
+          {profile.profilePhotoBase64 && (
+            <Box sx={{
+              width: 90, height: 90, borderRadius: "50%",
+              overflow: "hidden", flexShrink: 0,
+              border: "2px solid", borderColor: "divider",
+            }}>
+              <img
+                src={profile.profilePhotoBase64}
+                alt="Profile"
+                style={{ width: "100%", height: "100%", objectFit: "cover" }}
+              />
+            </Box>
+          )}
+
+          <Box sx={{ flex: 1 }}>
+            {profile.name && (
+              <Typography variant="h4" fontWeight="bold">{profile.name}</Typography>
+            )}
+            {profile.headline && (
+              <Typography variant="h6" color="text.secondary" sx={{ mt: 0.5 }}>
+                {profile.headline}
+              </Typography>
+            )}
+            {/* Contact line */}
+            <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap", mt: 1.5 }}>
+              {profile.location && (
+                <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+                  <LocationOnIcon fontSize="small" color="action" />
+                  <Typography variant="body2" color="text.secondary">
+                    {profile.location}
+                  </Typography>
+                </Box>
+              )}
+              {profile.email && (
+                <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+                  <EmailIcon fontSize="small" color="action" />
+                  <Typography variant="body2">{profile.email}</Typography>
+                </Box>
+              )}
+              {profile.linkedInUrl && (
+                <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+                  <LinkedInIcon fontSize="small" color="action" />
+                  <Link href={profile.linkedInUrl} target="_blank"
+                    rel="noopener noreferrer" variant="body2">
+                    LinkedIn
+                  </Link>
+                </Box>
+              )}
+            </Box>
+          </Box>
+        </Box>
+
+        {/* ── SUMMARY ── */}
+        {profile.summary && (
+          <>
+            <Divider sx={{ my: 2 }} />
+            <Typography variant="subtitle1" fontWeight="bold" sx={{ mb: 1 }}>Summary</Typography>
+            <Typography variant="body2" sx={{ whiteSpace: "pre-line" }}>
+              {profile.summary}
+            </Typography>
+          </>
+        )}
+
+        {/* ── EXPERIENCE ── */}
+        {(profile.experience ?? []).length > 0 && (
+          <>
+            <Divider sx={{ my: 2 }} />
+            <Typography variant="subtitle1" fontWeight="bold" sx={{ mb: 1 }}>Experience</Typography>
+            {(profile.experience ?? []).map((exp, i) => (
+              <Box key={i} sx={{ mb: 2 }}>
+                <Typography variant="body1" fontWeight="bold">
+                  {exp.title}{exp.title && exp.company ? " · " : ""}{exp.company}
+                </Typography>
+                {(exp.startDate || exp.endDate) && (
+                  <Typography variant="caption" color="text.secondary">
+                    {exp.startDate} – {exp.isCurrent ? "Present" : exp.endDate}
+                  </Typography>
+                )}
+                {exp.description && (
+                  <Typography variant="body2" sx={{ mt: 0.5, whiteSpace: "pre-line" }}>
+                    {exp.description}
+                  </Typography>
+                )}
+                {(exp.bullets ?? []).length > 0 && (
+                  <Box component="ul" sx={{ pl: 2, mt: 0.5 }}>
+                    {(exp.bullets ?? []).map((b, bi) => (
+                      <Typography component="li" variant="body2" key={bi}>{b}</Typography>
+                    ))}
+                  </Box>
+                )}
+              </Box>
+            ))}
+          </>
+        )}
+
+        {/* ── EDUCATION ── */}
+        {(profile.education ?? []).length > 0 && (
+          <>
+            <Divider sx={{ my: 2 }} />
+            <Typography variant="subtitle1" fontWeight="bold" sx={{ mb: 1 }}>Education</Typography>
+            {(profile.education ?? []).map((edu, i) => (
+              <Box key={i} sx={{ mb: 2 }}>
+                <Typography variant="body1" fontWeight="bold">{edu.school}</Typography>
+                {(edu.degree || edu.fieldOfStudy) && (
+                  <Typography variant="body2" color="text.secondary">
+                    {edu.degree}{edu.degree && edu.fieldOfStudy ? ", " : ""}{edu.fieldOfStudy}
+                  </Typography>
+                )}
+                {(edu.startDate || edu.endDate) && (
+                  <Typography variant="caption" color="text.secondary">
+                    {edu.startDate}{edu.startDate && edu.endDate ? " – " : ""}{edu.endDate}
+                  </Typography>
+                )}
+              </Box>
+            ))}
+          </>
+        )}
+
+        {/* ── SKILLS ── */}
+        {(profile.skills ?? []).length > 0 && (
+          <>
+            <Divider sx={{ my: 2 }} />
+            <Typography variant="subtitle1" fontWeight="bold" sx={{ mb: 1 }}>Skills</Typography>
+            <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75 }}>
+              {(profile.skills ?? []).map((skill, i) => (
+                <Chip key={i} label={skill} size="small" variant="outlined" />
+              ))}
+            </Box>
+          </>
+        )}
+
+        {/* ── LANGUAGES ── */}
+        {(profile.languages ?? []).length > 0 && (
+          <>
+            <Divider sx={{ my: 2 }} />
+            <Typography variant="subtitle1" fontWeight="bold" sx={{ mb: 1 }}>Languages</Typography>
+            <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75 }}>
+              {(profile.languages ?? []).map((lang, i) => (
+                <Chip key={i} label={lang} size="small" variant="outlined" color="secondary" />
+              ))}
+            </Box>
+          </>
+        )}
+
+      </Box>
+    );
+
+═══════════════════════════════════════════════════════════════════════════════
+STEP 7 — CREATE PDF GENERATOR: lib/generateCvPdf.ts
+═══════════════════════════════════════════════════════════════════════════════
+
+Purpose:
+  Uses @react-pdf/renderer to generate a PDF from the ProfileData entirely
+  client-side. This library renders React JSX into a real PDF file — no
+  server, no Canvas, no screenshots.
+
+  IMPORTANT: @react-pdf/renderer uses its OWN layout engine. It does NOT
+  render HTML/MUI components. You must use its own primitives:
+    Document, Page, View, Text, Image, StyleSheet, Font, pdf
+
+  These are imported ONLY from "@react-pdf/renderer".
+  Do NOT mix in MUI or HTML elements inside the PDF document.
+
+File to CREATE: lib/generateCvPdf.ts
+
+  7a. IMPORTS:
+
+    import {
+      Document, Page, View, Text, Image, StyleSheet, pdf, Font
+    } from "@react-pdf/renderer";
+    import React from "react";
+    import { ProfileData } from "./linkedinPdfParser";
+
+  7b. STYLES (define outside the component using StyleSheet.create):
+
+    const styles = StyleSheet.create({
+      page: {
+        fontFamily: "Helvetica",
+        fontSize: 10,
+        padding: 40,
+        color: "#1a1a1a",
+        backgroundColor: "#ffffff",
+      },
+      header: {
+        flexDirection: "row",
+        marginBottom: 16,
+        alignItems: "flex-start",
+        gap: 16,
+      },
+      avatar: {
+        width: 64,
+        height: 64,
+        borderRadius: 32,       // @react-pdf/renderer supports borderRadius
+      },
+      headerText: {
+        flex: 1,
+      },
+      name: {
+        fontSize: 22,
+        fontWeight: "bold",
+        marginBottom: 2,
+      },
+      headline: {
+        fontSize: 12,
+        color: "#555555",
+        marginBottom: 4,
+      },
+      contactRow: {
+        flexDirection: "row",
+        flexWrap: "wrap",
+        gap: 8,
+        fontSize: 9,
+        color: "#555555",
+      },
+      sectionTitle: {
+        fontSize: 12,
+        fontWeight: "bold",
+        marginBottom: 6,
+        marginTop: 14,
+        borderBottomWidth: 1,
+        borderBottomColor: "#dddddd",
+        paddingBottom: 3,
+      },
+      experienceEntry: {
+        marginBottom: 10,
+      },
+      entryTitle: {
+        fontSize: 10,
+        fontWeight: "bold",
+      },
+      entrySubtitle: {
+        fontSize: 9,
+        color: "#555555",
+        marginBottom: 2,
+      },
+      entryBody: {
+        fontSize: 9,
+        lineHeight: 1.4,
+      },
+      bullet: {
+        fontSize: 9,
+        lineHeight: 1.4,
+        marginLeft: 10,
+      },
+      chipRow: {
+        flexDirection: "row",
+        flexWrap: "wrap",
+        gap: 4,
+        marginTop: 4,
+      },
+      chip: {
+        fontSize: 9,
+        borderWidth: 1,
+        borderColor: "#999999",
+        borderRadius: 4,
+        paddingHorizontal: 6,
+        paddingVertical: 2,
+        color: "#333333",
+      },
+    });
+
+  7c. DOCUMENT COMPONENT (a function, not exported as default, used only here):
+
+    function CvDocument({ profile }: { profile: ProfileData }) {
+      return (
+        <Document>
+          <Page size="A4" style={styles.page}>
+
+            {/* HEADER */}
+            <View style={styles.header}>
+              {profile.profilePhotoBase64 && (
+                <Image src={profile.profilePhotoBase64} style={styles.avatar} />
+              )}
+              <View style={styles.headerText}>
+                {profile.name ? <Text style={styles.name}>{profile.name}</Text> : null}
+                {profile.headline ? <Text style={styles.headline}>{profile.headline}</Text> : null}
+                <View style={styles.contactRow}>
+                  {profile.location ? <Text>{profile.location}</Text> : null}
+                  {profile.email ? <Text>{profile.email}</Text> : null}
+                  {profile.linkedInUrl ? <Text>{profile.linkedInUrl}</Text> : null}
+                </View>
+              </View>
+            </View>
+
+            {/* SUMMARY */}
+            {profile.summary ? (
+              <View>
+                <Text style={styles.sectionTitle}>Summary</Text>
+                <Text style={styles.entryBody}>{profile.summary}</Text>
+              </View>
+            ) : null}
+
+            {/* EXPERIENCE */}
+            {(profile.experience ?? []).length > 0 ? (
+              <View>
+                <Text style={styles.sectionTitle}>Experience</Text>
+                {(profile.experience ?? []).map((exp, i) => (
+                  <View key={i} style={styles.experienceEntry}>
+                    <Text style={styles.entryTitle}>
+                      {[exp.title, exp.company].filter(Boolean).join(" · ")}
+                    </Text>
+                    {(exp.startDate || exp.endDate) ? (
+                      <Text style={styles.entrySubtitle}>
+                        {exp.startDate} – {exp.isCurrent ? "Present" : exp.endDate}
+                      </Text>
+                    ) : null}
+                    {exp.description ? (
+                      <Text style={styles.entryBody}>{exp.description}</Text>
+                    ) : null}
+                    {(exp.bullets ?? []).map((b, bi) => (
+                      <Text key={bi} style={styles.bullet}>• {b}</Text>
+                    ))}
+                  </View>
+                ))}
+              </View>
+            ) : null}
+
+            {/* EDUCATION */}
+            {(profile.education ?? []).length > 0 ? (
+              <View>
+                <Text style={styles.sectionTitle}>Education</Text>
+                {(profile.education ?? []).map((edu, i) => (
+                  <View key={i} style={styles.experienceEntry}>
+                    <Text style={styles.entryTitle}>{edu.school}</Text>
+                    {(edu.degree || edu.fieldOfStudy) ? (
+                      <Text style={styles.entrySubtitle}>
+                        {[edu.degree, edu.fieldOfStudy].filter(Boolean).join(", ")}
+                      </Text>
+                    ) : null}
+                    {(edu.startDate || edu.endDate) ? (
+                      <Text style={styles.entrySubtitle}>
+                        {edu.startDate}{edu.startDate && edu.endDate ? " – " : ""}{edu.endDate}
+                      </Text>
+                    ) : null}
+                  </View>
+                ))}
+              </View>
+            ) : null}
+
+            {/* SKILLS */}
+            {(profile.skills ?? []).length > 0 ? (
+              <View>
+                <Text style={styles.sectionTitle}>Skills</Text>
+                <View style={styles.chipRow}>
+                  {(profile.skills ?? []).map((skill, i) => (
+                    <Text key={i} style={styles.chip}>{skill}</Text>
+                  ))}
+                </View>
+              </View>
+            ) : null}
+
+            {/* LANGUAGES */}
+            {(profile.languages ?? []).length > 0 ? (
+              <View>
+                <Text style={styles.sectionTitle}>Languages</Text>
+                <View style={styles.chipRow}>
+                  {(profile.languages ?? []).map((lang, i) => (
+                    <Text key={i} style={styles.chip}>{lang}</Text>
+                  ))}
+                </View>
+              </View>
+            ) : null}
+
+          </Page>
+        </Document>
+      );
+    }
+
+  7d. EXPORTED FUNCTION (called from the Download button):
+
+    export async function generateCvPdf(profile: ProfileData): Promise<void> {
+      // pdf() from @react-pdf/renderer converts the Document JSX to a Blob
+      const blob = await pdf(<CvDocument profile={profile} />).toBlob();
+
+      // Create a temporary anchor element and trigger browser download
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `${profile.name ? profile.name.replace(/\s+/g, "_") : "cv"}_CV.pdf`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+      URL.revokeObjectURL(url);
+    }
+
+  IMPORTANT NOTE about @react-pdf/renderer and Next.js:
+    @react-pdf/renderer uses web APIs (Blob, URL.createObjectURL) and cannot
+    run on the server. The file lib/generateCvPdf.ts and everything it imports
+    must only be called from client components (which have "use client" at the
+    top). The editor page (app/editor/page.tsx) already has "use client" so
+    this is safe.
+
+  IMPORTANT NOTE about @react-pdf/renderer and React version:
+    @react-pdf/renderer requires React to be available globally as a peer dep.
+    It is already in the project. No special setup required.
+
+  POTENTIAL ISSUE — bundler import of @react-pdf/renderer:
+    Next.js may try to bundle @react-pdf/renderer for both server and client.
+    To prevent server-side errors, add to next.config.js:
+
+      /** @type {import('next').NextConfig} */
+      const nextConfig = {
+        webpack: (config) => {
+          config.resolve.alias.canvas = false;
+          return config;
+        },
+      };
+      module.exports = nextConfig;
+
+    (This suppresses a canvas module warning from pdf-lib internals.)
+
+═══════════════════════════════════════════════════════════════════════════════
+STEP 8 — UPDATE next.config.js
+═══════════════════════════════════════════════════════════════════════════════
+
+Open next.config.js and ensure it contains the webpack alias for canvas.
+
+Current file likely looks like:
+  /** @type {import('next').NextConfig} */
+  const nextConfig = {};
+  module.exports = nextConfig;
+
+Change to:
+  /** @type {import('next').NextConfig} */
+  const nextConfig = {
+    webpack: (config) => {
+      config.resolve.alias.canvas = false;
+      return config;
+    },
+  };
+  module.exports = nextConfig;
+
+═══════════════════════════════════════════════════════════════════════════════
+STEP 9 — VALIDATION UX ON THE UPLOAD PAGE (improvement to existing route)
+═══════════════════════════════════════════════════════════════════════════════
+
+The API route already calls isLinkedInPdf() but only logs a warning without
+returning an error. We want to show the user a clear message if the PDF is not
+a LinkedIn export.
+
+File to MODIFY: app/api/parse-linkedin-pdf/route.ts
+
+  Current code (around line 47):
+    const profileText = JSON.stringify(profile).toLowerCase();
+    if (!isLinkedInPdf(profileText)) {
+      console.warn("PDF may not be a LinkedIn export, but has profile data");
+      // Don't fail, just warn
+    }
+
+  Change to:
+    const profileText = JSON.stringify(profile).toLowerCase();
+    if (!isLinkedInPdf(profileText)) {
+      return NextResponse.json(
+        {
+          error:
+            "This doesn't look like a LinkedIn profile export. " +
+            "Please download your profile PDF from LinkedIn (Me → Settings & Privacy → " +
+            "Data privacy → Get a copy of your data, or use the Save to PDF button on your profile).",
+        },
+        { status: 422 },
+      );
+    }
+
+  Reason for 422 (Unprocessable Entity): the file is a valid PDF, just not the
+  right kind. 422 is more semantically correct than 400 here.
+
+═══════════════════════════════════════════════════════════════════════════════
+STEP 10 — VERIFY FILE STRUCTURE AFTER ALL CHANGES
+═══════════════════════════════════════════════════════════════════════════════
+
+After completing all steps, the workspace should look like this:
+
+  app/
+    globals.css               (unchanged)
+    layout.tsx                (unchanged)
+    page.tsx                  (MODIFIED — Step 3)
+    providers.tsx             (unchanged)
+    api/
+      parse-linkedin-pdf/
+        route.ts              (MODIFIED — Step 9)
+    editor/
+      page.tsx                (CREATED — Step 4)
+  components/
+    CvEditorForm.tsx          (CREATED — Step 5)
+    CvPreviewPanel.tsx        (CREATED — Step 6)
+    CvPreview.tsx             (unchanged — no longer used but harmless)
+    LinkedInUpload.tsx        (unchanged)
+  lib/
+    generateCvPdf.ts          (CREATED — Step 7)
+    linkedinPdfParser.ts      (unchanged)
+    sessionProfile.ts         (CREATED — Step 2)
+  next.config.js              (MODIFIED — Step 8)
+  package.json                (MODIFIED — Step 1 added @react-pdf/renderer)
+
+═══════════════════════════════════════════════════════════════════════════════
+STEP 11 — TEST THE FULL FLOW
+═══════════════════════════════════════════════════════════════════════════════
+
+Run the dev server:
+  pnpm dev
+
+Test sequence:
+
+  11a. UPLOAD PAGE TEST
+    - Open http://localhost:3000
+    - Try uploading a non-PDF file → should show "File must be a PDF" error
+    - Try uploading a PDF that is NOT a LinkedIn export → should show the
+      "doesn't look like a LinkedIn profile export" message (Step 9)
+    - Upload a real LinkedIn PDF export → should redirect to /editor
+
+  11b. EDITOR PAGE TEST
+    - After redirect, verify the left panel shows all form fields populated
+    - Verify the right panel shows the CV preview
+    - Open /editor directly in a new tab (without uploading) → should redirect
+      back to "/" immediately
+    - Edit the Name field → verify right panel updates in real time
+    - Edit Summary → verify right panel updates
+    - Delete a skill chip (click X) → verify chip disappears from both panels
+    - Type a new skill in the text field, press Enter or click Add → verify
+      chip appears in both panels
+    - Try adding a duplicate skill → should be silently ignored
+    - Add a bullet point to an experience entry → verify it appears in preview
+    - Click "Start over" → should clear sessionStorage and go back to "/"
+
+  11c. PROFILE PICTURE TEST
+    - In the editor, click the avatar circle → file picker opens
+    - Select any JPEG or PNG image
+    - Verify the image appears in the circle in the editor form
+    - Verify the image appears in the CV preview on the right
+
+  11d. DOWNLOAD TEST
+    - Click "Download PDF"
+    - Button shows "Generating…" with a spinner while generating
+    - A file download starts (browser shows download prompt or saves to Downloads)
+    - File is named "[Name]_CV.pdf"
+    - Open the PDF — verify it contains the name, headline, experience, skills,
+      languages, and the profile picture (if one was uploaded)
+
+═══════════════════════════════════════════════════════════════════════════════
+COMMON ERRORS AND FIXES
+═══════════════════════════════════════════════════════════════════════════════
+
+ERROR: "Cannot find module '@react-pdf/renderer'"
+  FIX: Run `pnpm add @react-pdf/renderer` and restart dev server.
+
+ERROR: "document is not defined" or "window is not defined" in generateCvPdf
+  FIX: generateCvPdf.ts is being imported in a server component. Ensure
+  app/editor/page.tsx has "use client" as its very first line.
+
+ERROR: "canvas" module not found during build
+  FIX: Add `config.resolve.alias.canvas = false` in next.config.js (Step 8).
+
+ERROR: PDF download produces a blank or empty PDF
+  FIX: @react-pdf/renderer requires that Image src values are either HTTP URLs
+  or base64 data URLs starting with "data:image/...". The profilePhotoBase64
+  field is a base64 data URL from FileReader, which is correct. If the image
+  is blank, check that the FileReader onload is being triggered correctly.
+
+ERROR: Redirect to /editor happens but then immediately redirects back to /
+  FIX: The sessionStorage read in useEffect is returning null. This can happen
+  if the save in handleUploadSuccess (page.tsx) is not completing before
+  navigation. Verify saveProfileToSession() is called BEFORE router.push().
+
+ERROR: TypeScript error "Property 'canvas' does not exist on type 'ResolveOptions'"
+  FIX: The webpack alias config is correct as written. If TypeScript complains
+  about next.config.js, the file is .js not .ts so this should not matter.
+
+ERROR: Skills chips not deleting
+  FIX: Verify the onDelete prop on each MUI Chip calls
+  `() => handleDeleteSkill(i)` using the correct index from the .map() callback.
+  Do not use a stale closure — always use the index from the current map().
+
+ERROR: Profile picture not showing in downloaded PDF
+  FIX: @react-pdf/renderer's <Image> component accepts base64 data URLs.
+  Ensure the src prop is exactly the string returned by FileReader
+  (e.g., "data:image/jpeg;base64,/9j/4AAQ..."). Do not trim or modify it.
+
+═══════════════════════════════════════════════════════════════════════════════
+IMPLEMENTATION ORDER SUMMARY
+═══════════════════════════════════════════════════════════════════════════════
+
+  1. pnpm add @react-pdf/renderer
+  2. Create lib/sessionProfile.ts
+  3. Modify app/page.tsx
+  4. Create app/editor/page.tsx
+  5. Create components/CvEditorForm.tsx
+  6. Create components/CvPreviewPanel.tsx
+  7. Create lib/generateCvPdf.ts
+  8. Modify next.config.js
+  9. Modify app/api/parse-linkedin-pdf/route.ts
+  10. Run pnpm dev and test the full flow
+
+  Each step is independent of the next EXCEPT:
+    - Steps 5 and 6 must exist before Step 4 (editor page) will compile
+    - Step 7 must exist before Step 4 will compile
+    - Step 2 must exist before Steps 3 and 4 will compile
+    - Step 1 must be done before Step 7 will compile
+
+═══════════════════════════════════════════════════════════════════════════════
+END OF PLAN
+═══════════════════════════════════════════════════════════════════════════════

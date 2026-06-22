@@ -1,22 +1,22 @@
 "use client";
 
-import React, { useState, useRef } from "react";
+import CheckCircleIcon from "@mui/icons-material/CheckCircle";
+import CloudUploadIcon from "@mui/icons-material/CloudUpload";
+import ErrorIcon from "@mui/icons-material/Error";
 import {
+  Alert,
   Box,
   Button,
   Card,
   CardContent,
   CircularProgress,
-  Alert,
-  Typography,
   LinearProgress,
+  Typography,
 } from "@mui/material";
-import CloudUploadIcon from "@mui/icons-material/CloudUpload";
-import CheckCircleIcon from "@mui/icons-material/CheckCircle";
-import ErrorIcon from "@mui/icons-material/Error";
+import React, { useRef, useState } from "react";
 import { ProfileData } from "../lib/linkedinPdfParser";
 
-export interface UploadParserProps {
+export interface LinkedInUploadProps {
   onSuccess?: (profileData: ProfileData) => void;
   onError?: (error: string) => void;
 }
@@ -24,12 +24,11 @@ export interface UploadParserProps {
 export default function LinkedInUpload({
   onSuccess,
   onError,
-}: UploadParserProps) {
+}: LinkedInUploadProps) {
   const [file, setFile] = useState<File | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<boolean>(false);
-  const [uploadProgress, setUploadProgress] = useState<number>(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const hasFile = file !== null;
@@ -77,7 +76,6 @@ export default function LinkedInUpload({
 
     setLoading(true);
     setError(null);
-    setUploadProgress(0);
 
     try {
       const formData = new FormData();
@@ -96,7 +94,6 @@ export default function LinkedInUpload({
 
       if (data.success && data.data) {
         setSuccess(true);
-        setUploadProgress(100);
         setFile(null);
         if (fileInputRef.current) {
           fileInputRef.current.value = "";

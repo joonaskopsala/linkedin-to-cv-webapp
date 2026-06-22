@@ -1,24 +1,49 @@
-# LinkedIn → CV (Next.js + Material UI)
+# LinkedIn → CV
 
-This workspace contains a starter Next.js app scaffolded to match the provided product plan and guide. It includes a placeholder PDF upload UI and a Material UI based preview.
+Convert a LinkedIn profile PDF export into a clean, formatted CV — no sign-up required.
 
-Quick start
+## Stack
 
-1. Install dependencies (using `pnpm`):
+- **Next.js** (App Router)
+- **Material UI** (MUI v9)
+- **pdf-parse** — server-side PDF text extraction
+- **TypeScript**
+
+## Getting started
 
 ```bash
 pnpm install
+pnpm dev
 ```
 
-2. Run the development server:
+Open [http://localhost:3000](http://localhost:3000).
 
-```bash
-pnpm run dev
+## How it works
+
+1. Go to [LinkedIn Data Export](https://www.linkedin.com/mypreferences/d/download-my-data), request a PDF export of your profile, and download it.
+2. Upload the PDF on the home page.
+3. The file is sent to the `/api/parse-linkedin-pdf` route which extracts text server-side and parses it into structured profile data.
+4. The parsed profile renders as a CV preview in the browser.
+
+## Project structure
+
+```
+app/
+  layout.tsx          # Root layout (server component)
+  providers.tsx       # MUI ThemeProvider (client component)
+  page.tsx            # Home page — hero + upload + CV preview
+  globals.css
+  api/
+    parse-linkedin-pdf/
+      route.ts        # POST handler — PDF → ProfileData
+components/
+  LinkedInUpload.tsx  # Drag-and-drop PDF upload card
+  CvPreview.tsx       # Structured CV renderer
+lib/
+  linkedinPdfParser.ts  # PDF text extraction and section parsing
 ```
 
-Open http://localhost:3000 to view the app.
+## Notes
 
-Notes
-
-- PDF parsing is not implemented yet. Add your LinkedIn PDF parser logic in `components/UploadParser.tsx` and remove or replace the placeholder UI.
-- Templates and editing features described in the product plan are scaffolded; next steps are implementing full editors, cloud save, and Pro gating.
+- PDF parsing is heuristic-based. Quality depends on how LinkedIn formats the PDF export for your locale.
+- No data is stored server-side — the parsed profile lives only in the browser session.

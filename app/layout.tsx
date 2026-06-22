@@ -1,18 +1,12 @@
-"use client";
-import * as React from "react";
-import "../app/globals.css";
-import {
-  ThemeProvider,
-  createTheme,
-  CssBaseline,
-  Container,
-} from "@mui/material";
+import type { Metadata } from "next";
+import "./globals.css";
+import Providers from "./providers";
 
-const theme = createTheme({
-  palette: {
-    mode: "light",
-  },
-});
+export const metadata: Metadata = {
+  title: "LinkedIn → CV",
+  description:
+    "Convert your LinkedIn profile PDF export into a professional CV in seconds.",
+};
 
 export default function RootLayout({
   children,
@@ -22,15 +16,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        <ThemeProvider theme={theme}>
-          <CssBaseline />
-          <Container
-            maxWidth="md"
-            style={{ paddingTop: 24, paddingBottom: 48 }}
-          >
-            {children}
-          </Container>
-        </ThemeProvider>
+        <Providers>{children}</Providers>
       </body>
     </html>
   );
