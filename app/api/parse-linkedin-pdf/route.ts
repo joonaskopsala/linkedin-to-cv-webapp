@@ -48,8 +48,15 @@ export async function POST(request: NextRequest) {
     // Validate it looks like a LinkedIn export
     const profileText = JSON.stringify(profile).toLowerCase();
     if (!isLinkedInPdf(profileText)) {
-      console.warn("PDF may not be a LinkedIn export, but has profile data");
-      // Don't fail, just warn - user might have a valid PDF that doesn't match our heuristics
+      return NextResponse.json(
+        {
+          error:
+            "This doesn't look like a LinkedIn profile export. " +
+            "Please download your profile PDF from LinkedIn (Me → Settings & Privacy → " +
+            "Data privacy → Get a copy of your data, or use the Save to PDF button on your profile).",
+        },
+        { status: 422 },
+      );
     }
 
     return NextResponse.json({

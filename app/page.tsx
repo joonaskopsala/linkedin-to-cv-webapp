@@ -1,12 +1,18 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { Box, Container, Link, Typography } from "@mui/material";
-import { useState } from "react";
 import LinkedInUpload from "../components/LinkedInUpload";
 import { ProfileData } from "../lib/linkedinPdfParser";
+import { saveProfileToSession } from "../lib/sessionProfile";
 
 export default function Home() {
-  const [profileData, setProfileData] = useState<ProfileData | null>(null);
+  const router = useRouter();
+
+  const handleUploadSuccess = (profile: ProfileData) => {
+    saveProfileToSession(profile);
+    router.push("/editor");
+  };
 
   return (
     <Box sx={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
@@ -33,61 +39,31 @@ export default function Home() {
       </Box>
 
       <Box component="main" sx={{ flex: 1 }}>
-        {!profileData ? (
-          /* ── Hero + Upload ── */
-          <Container
-            maxWidth="sm"
-            sx={{ py: { xs: 6, md: 10 }, textAlign: "center" }}
+        <Container
+          maxWidth="sm"
+          sx={{ py: { xs: 6, md: 10 }, textAlign: "center" }}
+        >
+          <Typography
+            variant="h3"
+            sx={{
+              mb: 1.5,
+              letterSpacing: "-1px",
+              lineHeight: 1.15,
+              fontWeight: "bold",
+            }}
           >
-            <Typography
-              variant="h3"
-              sx={{
-                mb: 1.5,
-                letterSpacing: "-1px",
-                lineHeight: 1.15,
-                fontWeight: "bold",
-              }}
-            >
-              Turn your LinkedIn profile into a CV
-            </Typography>
-            <Typography
-              variant="body1"
-              color="text.secondary"
-              sx={{ mb: 5, maxWidth: 420, mx: "auto" }}
-            >
-              Export your LinkedIn profile as a PDF, upload it here, and get a
-              clean, formatted CV instantly — no sign-up required.
-            </Typography>
-            <LinkedInUpload onSuccess={setProfileData} />
-          </Container>
-        ) : (
-          /* ── Parsed JSON view (temporary) ── */
-          <Container maxWidth="md" sx={{ py: 4 }}>
-            <Box sx={{ mb: 2, display: "flex", justifyContent: "flex-end" }}>
-              <Typography
-                variant="button"
-                sx={{ cursor: "pointer", color: "primary.main" }}
-                onClick={() => setProfileData(null)}
-              >
-                ← Upload another
-              </Typography>
-            </Box>
-            <Box
-              component="pre"
-              sx={{
-                bgcolor: "grey.900",
-                color: "grey.100",
-                p: 3,
-                borderRadius: 2,
-                overflow: "auto",
-                fontSize: "0.8rem",
-                lineHeight: 1.6,
-              }}
-            >
-              {JSON.stringify(profileData, null, 2)}
-            </Box>
-          </Container>
-        )}
+            Turn your LinkedIn profile into a CV
+          </Typography>
+          <Typography
+            variant="body1"
+            color="text.secondary"
+            sx={{ mb: 5, maxWidth: 420, mx: "auto" }}
+          >
+            Export your LinkedIn profile as a PDF, upload it here, and get a
+            clean, formatted CV instantly — no sign-up required.
+          </Typography>
+          <LinkedInUpload onSuccess={handleUploadSuccess} />
+        </Container>
       </Box>
 
       {/* Footer */}
